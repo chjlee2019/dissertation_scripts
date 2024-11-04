@@ -1,0 +1,272 @@
+
+## data directory /share/segallab/henny/2022_TRAP_RNAseq
+
+#Export all ReadsPerGene.out.tab files to desktop for DEG analysis in R Studio:
+scp henny@barbera.genomecenter.ucdavis.edu:/share/segallab/henny/Project_DSHO_S1K/star_aavs1k/*ReadsPerGene.out.tab ./
+
+**Example of _ReadsPerGene.out.tab file**
+	campus-034-154:STAR_SampleReadCounts nicole.coggins$ head C15-1_ReadsPerGene.out.tab 
+	N_unmapped	1066625	1066625	1066625
+	N_multimapping	508129	508129	508129
+	N_noFeature	227443	12015550	284593
+	N_ambiguous	1189407	15192	489045
+	ENSG00000223972	0	0	0
+	ENSG00000227232	5	0	5
+	ENSG00000278267	0	0	0
+	ENSG00000243485	0	0	0
+	ENSG00000274890	0	0	0
+	ENSG00000237613	0	0	0  
+	
+	ReadsPerGene.out.tab File Description:
+	- First four lines are summary stats for sample reads alignment
+	- After that:
+		Column 1 = Gene ID (from provided Annotation File, for me this is ENSEMBL ID)
+		Column 2 = Unstranded read mapping count (Typically will have more multimapping/ambiguous reads that get thrown out when compared to Column 3 and 4)
+		Column 3 = Forward Strand read mapping count
+		Column 4 = Reverse Strand read mapping count **Typically used for Illumina stranded libraries (NEBNext, TruSeq)**
+	
+	**As a general rule: "compare the total counts over genes in the 3rd and 4th column, and select the column which has much larger total counts...If the counts in two columns are not very different, the protocol is unstranded and you need to use the 2nd column...Yet even an easier method is to look at the N_noFeature line for the 3rd and 4th column and pick the column with the lowest count."
+	  (From Alexander Dobin: https://groups.google.com/forum/#!topic/rna-star/gZRJx3ElRNo)
+	  
+	  
+##DEG Analysis in R Studio:
+**I use R studio Version 3.6.2
+
+#Combine Reads and Sample Stats in Excel for DEG Analysis
+## For DESeq2 start R (version "3.6.2") 
+# from https://bioconductor.org/packages/release/bioc/html/DESeq2.html
+
+Remove first 4 lines from each file, transfer to STATS.txt file for the run
+Save as new-sample.ReadsperGene.out.tab.txt file
+
+Open new excel sheet with Column Headers to create combined read count file:
+	Column 1 = 			Gene_ID
+	Column 2,3,... = 	Sample Names
+Open all files is excel and transfer FOURTH COLUMN to combined file under corresponding sample header
+Save as .txt
+
+#Create Sample Legend
+
+Open new excel sheet with:
+	Column 1 = NO HEADER (nothing in A1), Sample IDs listed in SAME ORDER AS COLUMNS OF COMBINED COUNTS FILE
+	Column 2 = Header: sample_ID, sample IDs listed in SAME ORDER AS COLUMNS OF COMBINED COUNTS FILE
+	Column 3 = Header: condition, condition group that each sample belongs to (try to keep to one word, no spaces, no special symbols)
+
+
+## Limma-Voom (EdgeR) Analysis:
+
+Must download and install edgeR in R:
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+BiocManager::install("edgeR")
+
+> library(edgeR)
+> library(gplots)
+> library(RColorBrewer)
+
+# Read in counts table:
+> setwd("~/Box Sync/Data/Sequencing_Illumina/2022_TRAP_RNA-seq/rn6_star_genecount")
+    
+> reads <- read.delim("/Users/Henny 1/Box Sync/Data/Sequencing_Illumina/2022_TRAP_RNA-seq//Users/Henny 1/Box Sync/Data/Sequencing_Illumina/2022_TRAP_RNA-seq/rn6_star_genecount/rn6_counts.txt", row.names="Gene_ID")
+> snames <- colnames(reads)
+> snames
+
+ [1] "trapm1" "trapm2" "trapm3" "trapm4" "trapf1" "trapf2" "trapf3"
+ [8] "trapf4" "fam1"   "fam2"   "fam3"   "fam4"   "faf1"   "faf2"  
+[15] "faf3"   "faf4"    
+
+# Create Grouping Factor that will be used to stratify Samples, number has to be same for groups and columns in Reads.txt file
+> group <- factor(c("trapm","trapm","trapm","trapm","trapf","trapf","trapf","trapf","fam","fam","fam","fam","faf","faf","faf","faf"))
+> group
+ [1] trapm trapm trapm trapm trapf trapf trapf trapf fam   fam  
+[11] fam   fam   faf   faf   faf   faf  
+Levels: faf fam trapf trapm
+
+# Combine Grouping Factor with Counts Data to make DGEList:
+> dge <- DGEList(counts=reads, group=group)
+
+# Calculate normalization factors:
+> dge <- calcNormFactors(dge)
+**Creates "Large DGEList" with counts and samples**
+**These are scaled to the raw library size (calculated by total number of reads for each sample) using TMM (weighted trimmed means of M values to reference) for model-based normalization
+> dge$samples
+
+        group lib.size norm.factors
+trapm1 trapm 16232561            1
+trapm2 trapm 21729002            1
+trapm3 trapm 19126983            1
+trapm4 trapm 17785036            1
+trapf1 trapf 11786235            1
+trapf2 trapf 16469718            1
+trapf3 trapf 18681567            1
+trapf4 trapf 17350093            1
+fam1     fam 20576464            1
+fam2     fam 18427889            1
+fam3     fam 23185491            1
+fam4     fam 20130016            1
+faf1     faf 15500483            1
+faf2     faf 23677592            1
+faf3     faf 22670493            1
+faf4     faf 19905378            1
+
+
+# Filter out non-expressed and lowly expressed genes:
+
+**Following Bioconductor edgeRUserGuide Settings - FilterByExpr function will remove gene rows that do not have worthwhile expression in the same number of samples as the smallest group size (in my case = 3 samples)
+> keep <- filterByExpr(dge)
+> dge_filtered <- dge[keep, , keep.lib.sizes=FALSE]
+> dim(dge)
+> dim(dge)
+[1] 31036    16
+> dim(dge_filtered)
+[1] 15894    16
+**Went from 31036  genes to 15894 genes**
+
+**Ultimately chose edgeR User Guide Settings for Analysis**
+
+#Plot MDS (similar to PCA plot) with colors matching treatment and sample names on plot
+> levels(dge_filtered$samples$group)
+[1] "faf"   "fam"   "trapf" "trapm"
+
+> col.treatment <- c("pink", "green", "red", "blue")[dge_filtered$samples$group]
+> data.frame(dge_filtered$samples$group, col.treatment)
+  
+   dge_filtered.samples.group col.treatment
+1                       trapm          blue
+2                       trapm          blue
+3                       trapm          blue
+4                       trapm          blue
+5                       trapf           red
+6                       trapf           red
+7                       trapf           red
+8                       trapf           red
+9                         fam         green
+10                        fam         green
+11                        fam         green
+12                        fam         green
+13                        faf          pink
+14                        faf          pink
+15                        faf          pink
+16                        faf          pink
+
+> plotMDS(dge_filtered, col = col.treatment)
+
+# Create Model Matrix for Group Comparisons:
+> ExpMatrix <- model.matrix(~0+group, data = dge_filtered$samples)
+> colnames(ExpMatrix) <- levels(dge_filtered$samples$group)
+> ExpMatrix
+
+       faf fam trapf trapm
+trapm1   0   0     0     1
+trapm2   0   0     0     1
+trapm3   0   0     0     1
+trapm4   0   0     0     1
+trapf1   0   0     1     0
+trapf2   0   0     1     0
+trapf3   0   0     1     0
+trapf4   0   0     1     0
+fam1     0   1     0     0
+fam2     0   1     0     0
+fam3     0   1     0     0
+fam4     0   1     0     0
+faf1     1   0     0     0
+faf2     1   0     0     0
+faf3     1   0     0     0
+faf4     1   0     0     0
+attr(,"assign")
+[1] 1 1 1 1
+attr(,"contrasts")
+attr(,"contrasts")$group
+[1] "contr.treatment"
+
+
+# Perform Voom Normalization and Plot Variance against Mean
+
+> yEF <- voom(dge_filtered, ExpMatrix, plot = TRUE)
+> yUF <- voom(dge, ExpMatrix, plot = TRUE)
+**Looking for effect of filtering with removal of black dots that create hill in beginning of plot and makes trend line smooth
+
+# Check Normalization with BoxPlot of Log2 CPM for each Sample, should all be very similar (especially when compared to :
+> logcountsEF <- cpm(dge_filtered, log = TRUE)
+> boxplot(yEF$E, xlab="", ylab="Log2 counts per million",las=2, main="Voom transformed logCPM")
+> abline(h=median(yEF$E),col="blue")
+
+# Fit Data to a Linear Model
+> fitEF <- lmFit(yEF, ExpMatrix)
+> head(coef(fitEF))
+
+# Make Pariwise Comparisons Between Groups of Interest for DEGs:
+> trapf_faf <- makeContrasts(trapfvsfaf=trapf - faf, levels = ExpMatrix)
+> trapf_faf
+
+        Contrasts
+Levels  trapfvsfaf
+  faf           -1
+  fam            0
+  trapf          1
+  trapm          0
+  
+> fit.trapf_faf <- contrasts.fit(fitEF, trapf_faf)
+> fit.trapf_faf <- eBayes(fit.trapf_faf)
+**Empirical Bayes smoothing of Standard Error**
+> dim(fit.trapf_faf)
+[1] 15894     1
+**Should be same number of genes left with after filtering low-count genes**
+
+> summa.fit.trapf_faf <- decideTests(fit.trapf_faf)
+**decideTests uses the significance cutoff value of 5% FDR**
+
+> summary(summa.fit.trapf_faf)
+      trapfvsfaf
+Down            0
+NotSig      15894
+Up              0
+
+# Make Pariwise Comparisons Between Groups of Interest for DEGs:
+> trapm_fam <- makeContrasts(trapmvsfam=trapm - fam, levels = ExpMatrix)
+> trapm_fam
+
+        Contrasts
+Levels  trapfvsfaf
+  faf           -1
+  fam            0
+  trapf          1
+  trapm          0
+  
+> fit.trapm_fam <- contrasts.fit(fitEF, trapm_fam)
+> fit.trapm_fam <- eBayes(fit.trapm_fam)
+**Empirical Bayes smoothing of Standard Error**
+> dim(fit.trapm_fam)
+[1] 15894     1
+**Should be same number of genes left with after filtering low-count genes**
+
+> summa.fit.trapm_fam <- decideTests(fit.trapm_fam)
+**decideTests uses the significance cutoff value of 5% FDR**
+
+> summary(summa.fit.trapm_fam)
+      trapmvsfam
+Down            0
+NotSig      15894
+Up              0
+
+
+# Create short list of top DEGs based on Adjusted P-Value cutoff and export to .csv file with ENSEMBL ID as Row Headers:
+> limma.trapf_wtf_0.05 <- topTable(fit.trapf_wtf,coef="trapfvswtf",sort.by="p",n="Inf", p.value=0.05)
+> dim(limma.trapf_wtf_0.05)
+[1] 6 6
+> write.csv(limma.faf_fam_0.05,file="Limma_faf_fam-Padj0.05.csv",row.names=TRUE)
+
+> limma.faf_fam_all <- topTable(fit.faf_fam,coef="fafvsfam",sort.by="p",n="Inf")
+> dim(limma.faf_fam_all)
+[1] 15894     6
+> write.csv(limma.faf_fam_all, file="Limma_faf_fam_all.csv",row.names=TRUE)
+
+
+**Now repeat with next pairwise comparison
+
+
+
+
+
+
+##Downstream Processing of pairwise comparison DEG subsets with GO Analyses, Network Analyses, etc...
